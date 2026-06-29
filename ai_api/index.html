@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>RAG Chatbot</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: #0a0a0a; color: #e0e0e0; font-family: 'Segoe UI', system-ui, sans-serif; height: 100vh; display: flex; flex-direction: column; }
+  header { padding: 14px 24px; border-bottom: 1px solid #1a1a1a; display: flex; align-items: center; justify-content: space-between; }
+  header h1 { font-size: 15px; font-weight: 600; color: #fff; letter-spacing: 0.3px; }
+  header span { font-size: 12px; color: #444; }
+  #auth-bar { padding: 10px 24px; border-bottom: 1px solid #141414; display: flex; gap: 8px; background: #080808; }
+  #auth-bar input { flex: 1; background: #111; border: 1px solid #222; color: #ccc; padding: 7px 12px; border-radius: 6px; font-size: 13px; outline: none; }
+  #auth-bar input:focus { border-color: #333; }
+  #auth-bar button { background: #161616; border: 1px solid #2a2a2a; color: #888; padding: 7px 14px; border-radius: 6px; cursor: pointer; font-size: 12px; }
+  #auth-bar button:hover { color: #bbb; border-color: #444; }
+  #messages { flex: 1; overflow-y: auto; padding: 20px 24px; display: flex; flex-direction: column; gap: 14px; }
+  .msg { max-width: 78%; }
+  .msg.user { align-self: flex-end; }
+  .msg.assistant { align-self: flex-start; }
+  .bubble { padding: 11px 15px; border-radius: 10px; font-size: 13.5px; line-height: 1.65; white-space: pre-wrap; word-break: break-word; }
+  .msg.user .bubble { background: #111827; border: 1px solid #1e2a3a; color: #c0cde8; }
+  .msg.assistant .bubble { background: #111; border: 1px solid #1e1e1e; color: #ddd; }
+  .meta { font-size: 11px; color: #333; margin-top: 4px; padding: 0 3px; }
+  .msg.user .meta { text-align: right; }
+  .sources { display: flex; gap: 4px; flex-wrap: wrap; margin-top: 6px; }
+  .src { background: #0f0f0f; border: 1px solid #222; color: #555; font-size: 10px; padding: 2px 8px; border-radius: 4px; font-family: monospace; }
+  #input-area { padding: 14px 24px; border-top: 1px solid #141414; display: flex; gap: 10px; background: #080808; }
+  #q { flex: 1; background: #0f0f0f; border: 1px solid #222; color: #e0e0e0; padding: 10px 14px; border-radius: 8px; font-size: 13.5px; resize: none; outline: none; font-family: inherit; min-height: 42px; max-height: 120px; line-height: 1.5; }
+  #q:focus { border-color: #333; }
+  #send { background: #111827; border: 1px solid #1e2a3a; color: #7a90c0; padding: 0 20px; border-radius: 8px; cursor: pointer; font-size: 13px; transition: all 0.1s; white-space: nowrap; }
+  #send:hover { background: #162033; color: #a0b4d8; }
+  #send:disabled { opacity: 0.35; cursor: not-allowed; }
+  .dots { display: flex; gap: 4px; align-items: center; padding: 4px 0; }
+  .dots span { width: 5px; height: 5px; background: #333; border-radius: 50%; animation: pop 1.2s infinite; }
+  .dots span:nth-child(2) { animation-delay: 0.2s; }
+  .dots span:nth-child(3) { animation-delay: 0.4s; }
+  @keyframes pop { 0%,60%,100% { transform: translateY(0); opacity: 0.4; } 30% { transform: translateY(-5px); opacity: 1; } }
+</style>
+</head>
+<body>
+<header>
+  <h1>&#x2B21; RAG Chatbot</h1>
+  <span>Powered by Llama + pgvector + Cohere</span>
+</header>
+<div id="auth-bar">
+  <input type="password" id="key" placeholder="Admin key" />
+  <button onclick="setKey()">Save</button>
+</div>
+<div id="messages">
+  <div class="msg assistant">
+    <div class="bubble">Ask me anything about your API documentation.</div>
+  </div>
+</div>
+<div id="input-area">
+  <textarea id="q" placeholder="Ask about any endpoint..." onkeydown="onKey(event)"></textarea>
+  <button id="send" onclick="send()">Send</button>
+</div>
+<script>
+  let key = localStorage.getItem('rag_key') || '';
+  document.getElementById('key').value = key;
+
+  function setKey() {
+    key = document.getElementById('key').value.trim();
+    localStorage.setItem('rag_key', key);
+  }
+
+  function onKey(e) {
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); }
+  }
+
+  function esc(t) {
+    return t.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  }
+
+  function addMsg(role, text, sources) {
+    const box = document.getElementById('messages');
+    const d = document.createElement('div');
+    d.className = 'msg ' + role;
+    let h = `<div class="bubble">${esc(text)}</div>`;
+    if (sources && sources.length) {
+      h += `<div class="sources">${sources.map(s=>`<span class="src">${esc(s)}</span>`).join('')}</div>`;
+    }
+    h += `<div class="meta">${new Date().toLocaleTimeString()}</div>`;
+    d.innerHTML = h;
+    box.appendChild(d);
+    box.scrollTop = box.scrollHeight;
+  }
+
+  function addTyping() {
+    const box = document.getElementById('messages');
+    const d = document.createElement('div');
+    d.className = 'msg assistant'; d.id = 'typing';
+    d.innerHTML = '<div class="bubble"><div class="dots"><span></span><span></span><span></span></div></div>';
+    box.appendChild(d);
+    box.scrollTop = box.scrollHeight;
+  }
+
+  async function send() {
+    const q = document.getElementById('q').value.trim();
+    if (!q) return;
+    if (!key) { alert('Set the admin key first.'); return; }
+    document.getElementById('q').value = '';
+    addMsg('user', q);
+    addTyping();
+    document.getElementById('send').disabled = true;
+    try {
+      const r = await fetch('/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-admin-key': key },
+        body: JSON.stringify({ query: q })
+      });
+      document.getElementById('typing')?.remove();
+      const data = await r.json();
+      if (!r.ok) { addMsg('assistant', 'Error ' + r.status + ': ' + (data.detail || 'unknown')); return; }
+      addMsg('assistant', data.answer, data.sources);
+    } catch(e) {
+      document.getElementById('typing')?.remove();
+      addMsg('assistant', 'Network error: ' + e.message);
+    } finally {
+      document.getElementById('send').disabled = false;
+      document.getElementById('q').focus();
+    }
+  }
+</script>
+</body>
+</html>

@@ -1,0 +1,7 @@
+fastapi
+uvicorn
+psycopg2-binary
+httpx
+cohere>=5.0
+langchain
+langchain-text-splitters
